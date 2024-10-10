@@ -1,55 +1,26 @@
 package main
 
 import (
-	"crypto/tls"
+	"github.com/lava15/http-reverse-proxy/config"
+	"github.com/lava15/http-reverse-proxy/handlers"
+	"github.com/lava15/http-reverse-proxy/proxy"
+	"github.com/lava15/http-reverse-proxy/tlsconfig"
 	"log"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 )
 
-var (
-	backendUrl *url.URL
-	err        error
-)
-
-func init() {
-	backendUrl, err = url.Parse("http://localhost:8080")
-	if err != nil {
-		log.Fatalf("Failed to parse backend URL: %v", err)
-	}
-}
 func main() {
+	cfg := config.LoadConfig()
+	proxyHandler, _ := proxy.NewProxy(cfg.BackendURL)
+	tlsConf, _ := tlsconfig.LoadTLSConfig(cfg.CertFile, cfg.KeyFile)
+	httpHandler := handlers.NewHandler(proxyHandler)
 	server := &http.Server{
-		Addr:    ":8443",
-		Handler: proxyHandler(),
+		Addr:      cfg.Address,
+		Handler:   httpHandler,
+		TLSConfig: tlsConf,
 	}
-
-	cert, err := tls.LoadX509KeyPair("cert.pem", "key.pem")
-	if err != nil {
-		log.Fatalf("Failed to load TLS certificates: %v", err)
+	log.Printf("Starting HTTP/2 reverse proxy on %s", cfg.Address)
+	if err := server.ListenAndServeTLS(cfg.CertFile, cfg.KeyFile); err != nil {
+		log.Fatalf("Failed to start HTTP/2 reverse proxy on %s: %v", cfg.Address, err)
 	}
-
-	server.TLSConfig = &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		NextProtos:   []string{"h2", "http/1.1"},
-	}
-
-	log.Println("Starting HTTP/2 reverse proxy on https://localhost:8443")
-	err = server.ListenAndServeTLS("", "")
-	if err != nil {
-		log.Fatalf("Failed to start server: %v", err)
-	}
-}
-
-func proxyHandler() http.Handler {
-	proxy := httputil.NewSingleHostReverseProxy(backendUrl)
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		originalDirector(req)
-	}
-	proxy.ModifyResponse = func(resp *http.Response) error {
-		return nil
-	}
-	return proxy
 }
